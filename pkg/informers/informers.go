@@ -190,23 +190,36 @@ func (w *ForResource) ListAllByNamespace(namespace string, selector labels.Selec
 
 // Get invokes all wrapped informers and returns the first found runtime object.
 // It returns the first occurred error.
+// The name parameter should be in the format "namespace/name" for namespaced resources.
 func (w *ForResource) Get(name string) (runtime.Object, error) {
-	var err error
+	// Split the key into namespace and name
+	namespace, resourceName, err := cache.SplitMetaNamespaceKey(name)
+	if err != nil {
+		return nil, fmt.Errorf("invalid key format %q: %w", name, err)
+	}
 
+	var lastErr error
 	for _, inf := range w.informers {
 		var ret runtime.Object
-		ret, err = inf.Lister().Get(name)
-		if apierrors.IsNotFound(err) {
+		// Use ByNamespace to get the namespace-scoped lister, then Get with just the name
+		if namespace != "" {
+			ret, lastErr = inf.Lister().ByNamespace(namespace).Get(resourceName)
+		} else {
+			// For cluster-scoped resources, use Get directly with the resource name
+			ret, lastErr = inf.Lister().Get(resourceName)
+		}
+
+		if apierrors.IsNotFound(lastErr) {
 			continue
 		}
-		if err != nil {
-			return nil, err
+		if lastErr != nil {
+			return nil, lastErr
 		}
 
 		return ret, nil
 	}
 
-	return nil, err
+	return nil, lastErr
 }
 
 // newInformerOptions returns a list option tweak function and a list of namespaces
